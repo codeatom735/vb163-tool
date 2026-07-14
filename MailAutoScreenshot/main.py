@@ -1,14 +1,23 @@
-"""Application entry point for MailAutoScreenshot.
+"""Application entry point for MailAutoScreenshot."""
 
-Stage 1 only prepares the project structure. The real PySide6 application
-bootstrap will be implemented in stage 2.
-"""
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtWidgets import QApplication
+
+from ui.main_window import MainWindow
 
 
 def main() -> int:
-    print("MailAutoScreenshot project structure is ready.")
-    print("Stage 2 will add the PySide6 desktop interface.")
-    return 0
+    app = QApplication(sys.argv)
+    app.setApplicationName("163邮箱自动搜索截图工具")
+    app.setOrganizationName("MailAutoScreenshot")
+
+    window = MainWindow()
+    window.show()
+
+    return app.exec()
 
 
 if __name__ == "__main__":
