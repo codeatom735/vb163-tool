@@ -1,0 +1,6 @@
+{
+  "chrome_profile": "C:/MailAutoProfile",
+  "timeout": 20,
+  "save_path": "D:/MailScreenshot",
+  "mail_url": "https://mail.163.com/"
+}
