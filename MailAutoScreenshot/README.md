@@ -52,6 +52,18 @@ This stage implements 163 login detection:
 - Uses Playwright locator `wait_for` instead of fixed sleeps
 - Keeps all 163 selectors centralized in `services/selectors.py`
 
+## Stage 6
+
+This stage implements Excel reading:
+
+- Uses `openpyxl`
+- Reads the first worksheet by default
+- Reads the first column as mail names
+- Filters empty rows
+- Converts cell values to trimmed strings
+- Returns `list[str]`
+- Handles missing files, unsupported formats, missing sheets, and empty data
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI
