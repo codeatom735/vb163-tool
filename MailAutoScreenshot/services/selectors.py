@@ -71,6 +71,54 @@ SEARCH_LOADING_SELECTORS = (
     "[aria-busy='true']",
 )
 
+MAIL_RESULT_ITEM_SELECTORS = (
+    "[class*='mail-list'] [role='row']",
+    "[class*='mailList'] [role='row']",
+    "[class*='mail-list'] li",
+    "[class*='mailList'] li",
+    "[class*='result'] [role='row']",
+    "[class*='result'] li",
+    "tr",
+)
+
+MAIL_DETAIL_CONTAINER_SELECTORS = (
+    "[class*='mail-content']",
+    "[class*='mailContent']",
+    "[class*='readmail']",
+    "[class*='readMail']",
+    "[class*='mail-detail']",
+    "[class*='mailDetail']",
+    "[id*='mailContent']",
+    "[id*='MailContent']",
+    "[id*='dvMailContent']",
+    "[class*='letter']",
+)
+
+MAIL_DETAIL_TITLE_SELECTORS = (
+    "[class*='subject']",
+    "[class*='Subject']",
+    "[id*='subject']",
+    "[id*='Subject']",
+    "[class*='title']",
+    "[class*='Title']",
+    "[role='heading']",
+    "h1",
+    "h2",
+)
+
+MAIL_DETAIL_QR_CODE_SELECTORS = (
+    "img[alt*='二维码']",
+    "img[title*='二维码']",
+    "img[src*='qrcode']",
+    "img[src*='QRCode']",
+    "img[src*='qr']",
+    "[class*='qrcode']",
+    "[class*='qrCode']",
+    "[id*='qrcode']",
+    "[id*='QRCode']",
+    "canvas",
+)
+
 MAIL_SELECTORS = {
     "login_markers": LOGIN_MARKER_SELECTORS,
     "authenticated_markers": AUTHENTICATED_MARKER_SELECTORS,
@@ -78,4 +126,8 @@ MAIL_SELECTORS = {
     "search_button": SEARCH_BUTTON_SELECTORS,
     "search_result_area": SEARCH_RESULT_AREA_SELECTORS,
     "search_loading": SEARCH_LOADING_SELECTORS,
+    "mail_result_item": MAIL_RESULT_ITEM_SELECTORS,
+    "mail_detail_container": MAIL_DETAIL_CONTAINER_SELECTORS,
+    "mail_detail_title": MAIL_DETAIL_TITLE_SELECTORS,
+    "mail_detail_qr_code": MAIL_DETAIL_QR_CODE_SELECTORS,
 }

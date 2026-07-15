@@ -76,6 +76,19 @@ This stage implements mail search:
 - Returns a structured `MailSearchResult`
 - Does not use mouse coordinates or fixed sleeps
 
+## Stage 8
+
+This stage implements screenshot saving:
+
+- Opens a searched mail detail page before screenshot capture
+- Saves PNG files with the original Excel mail name
+- Does not add an index prefix such as `001_`
+- Replaces only Windows-illegal filename characters
+- Prefers clipping from the mail title to the bottom QR code
+- Falls back to the mail detail container
+- Falls back to a full-page screenshot
+- Validates PNG output with Pillow
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI

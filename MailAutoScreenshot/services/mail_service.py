@@ -10,6 +10,8 @@ from services.selectors import (
     AUTHENTICATED_MARKER_SELECTORS,
     AUTHENTICATED_URL_KEYWORDS,
     LOGIN_MARKER_SELECTORS,
+    MAIL_DETAIL_CONTAINER_SELECTORS,
+    MAIL_RESULT_ITEM_SELECTORS,
     SEARCH_BUTTON_SELECTORS,
     SEARCH_INPUT_SELECTORS,
     SEARCH_LOADING_SELECTORS,
@@ -40,6 +42,15 @@ class MailSearchResult:
 
     keyword: str
     result_detected: bool
+    message: str
+
+
+@dataclass(frozen=True)
+class MailOpenResult:
+    """Result of opening a searched mail detail page."""
+
+    keyword: str
+    opened: bool
     message: str
 
 
@@ -173,6 +184,54 @@ class MailService:
             message="搜索完成",
         )
 
+    def search_and_open_mail(self, keyword: str) -> MailOpenResult:
+        """Search a keyword and open the matching mail detail page."""
+
+        self.search_mail(keyword)
+        return self.open_first_search_result(keyword)
+
+    def open_first_search_result(self, keyword: str) -> MailOpenResult:
+        """Open the first search result for a keyword without using coordinates."""
+
+        clean_keyword = keyword.strip()
+        if not clean_keyword:
+            raise MailServiceError("邮件关键词不能为空")
+
+        self._log(f"打开搜索结果: {clean_keyword}")
+        result_locator = self._find_result_locator(clean_keyword)
+
+        try:
+            result_locator.click(timeout=self.timeout_ms)
+        except Exception as exc:
+            raise MailServiceError(f"打开搜索结果失败: {clean_keyword}; {exc}") from exc
+
+        self._wait_for_loading_to_finish()
+        self.wait_for_mail_detail(clean_keyword)
+
+        return MailOpenResult(
+            keyword=clean_keyword,
+            opened=True,
+            message="邮件详情已打开",
+        )
+
+    def wait_for_mail_detail(self, keyword: str) -> None:
+        """Wait until the mail detail page is visible."""
+
+        try:
+            self.page.get_by_text(keyword, exact=False).first.wait_for(
+                state="visible",
+                timeout=self.timeout_ms,
+            )
+            return
+        except Exception:
+            pass
+
+        self._first_visible_locator(
+            MAIL_DETAIL_CONTAINER_SELECTORS,
+            self.timeout_ms,
+            "邮件详情区域",
+        )
+
     def _any_visible(self, selectors: tuple[str, ...], timeout_ms: int) -> bool:
         selector = _join_selectors(selectors)
         if not selector:
@@ -233,6 +292,20 @@ class MailService:
             )
         except Exception as exc:
             raise MailServiceError(f"搜索后未检测到结果区域或关键词: {keyword}") from exc
+
+    def _find_result_locator(self, keyword: str) -> Any:
+        try:
+            keyword_locator = self.page.get_by_text(keyword, exact=False).first
+            keyword_locator.wait_for(state="visible", timeout=3000)
+            return keyword_locator
+        except Exception:
+            pass
+
+        return self._first_visible_locator(
+            MAIL_RESULT_ITEM_SELECTORS,
+            self.timeout_ms,
+            "搜索结果邮件",
+        )
 
     def _wait_for_loading_to_finish(self) -> None:
         loading_selector = _join_selectors(SEARCH_LOADING_SELECTORS)
