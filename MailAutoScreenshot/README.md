@@ -30,6 +30,17 @@ This stage implements configuration loading and saving:
 - Loads the Chrome persistent profile directory into the GUI
 - Saves changed save/profile paths back to `config/config.json`
 
+## Stage 4
+
+This stage implements the Playwright browser wrapper:
+
+- Uses `chromium.launch_persistent_context`
+- Stores browser data in `chrome_profile`, such as `C:/MailAutoProfile`
+- Opens real Chrome through the `chrome` channel
+- Keeps cookies and login state between runs
+- Provides `start`, `open_url`, `get_page`, `get_context`, and `close`
+- Avoids fixed sleeps; later services will use locators and wait APIs
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI
