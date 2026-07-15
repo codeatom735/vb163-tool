@@ -106,6 +106,16 @@ This stage implements background task scheduling:
 - Generates `task_report_YYYYMMDD_HHMMSS.csv` in the screenshot directory
 - Writes runtime logs to `logs/app.log`
 
+## Stage 10
+
+This stage implements packaging support:
+
+- Adds `MailAutoScreenshot.spec`
+- Adds `scripts/build_exe.ps1`
+- Adds `BUILD.md`
+- Keeps `config/config.json` editable next to the EXE at runtime
+- Builds a windowed executable named `MailAutoScreenshot.exe`
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI

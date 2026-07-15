@@ -16,7 +16,7 @@ def setup_logger(log_dir: str = "logs") -> Any:
     installed.
     """
 
-    log_path = Path(log_dir).expanduser()
+    log_path = _resolve_log_dir(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -25,11 +25,12 @@ def setup_logger(log_dir: str = "logs") -> Any:
         return _setup_stdlib_logger(log_path)
 
     logger.remove()
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
-    )
+    if sys.stderr is not None:
+        logger.add(
+            sys.stderr,
+            level="INFO",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        )
     logger.add(
         log_path / "app.log",
         level="INFO",
@@ -54,7 +55,19 @@ def _setup_stdlib_logger(log_path: Path) -> logging.Logger:
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
+    if sys.stderr is not None:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
     return logger
+
+
+def _resolve_log_dir(log_dir: str) -> Path:
+    path = Path(log_dir).expanduser()
+    if path.is_absolute():
+        return path
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / path
+
+    return Path.cwd() / path

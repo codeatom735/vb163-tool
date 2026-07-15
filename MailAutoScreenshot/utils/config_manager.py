@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.json"
+def get_app_base_dir() -> Path:
+    """Return the editable app directory for source or frozen execution."""
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parents[1]
+
+
+CONFIG_PATH = get_app_base_dir() / "config" / "config.json"
 
 
 @dataclass(frozen=True)
