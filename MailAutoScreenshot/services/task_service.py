@@ -165,7 +165,7 @@ class TaskService:
                 try:
                     mail_service.search_and_open_mail(keyword)
                     screenshot = screenshot_service.save_mail_detail_screenshot(
-                        page=page,
+                        page=mail_service.get_detail_context(),
                         keyword=keyword,
                         save_dir=str(save_dir),
                     )

@@ -47,19 +47,33 @@ class ScreenshotService:
         file_path = unique_path(save_dir, safe_filename(keyword))
 
         try:
-            if self._screenshot_title_to_qr(page, file_path):
+            if self._try_strategy(self._screenshot_title_to_qr, page, file_path):
                 self._validate_png(file_path)
                 return ScreenshotResult(str(keyword), str(file_path), "title_to_qr", "截图成功")
 
-            if self._screenshot_detail_container(page, file_path):
+            if self._try_strategy(self._screenshot_detail_container, page, file_path):
                 self._validate_png(file_path)
                 return ScreenshotResult(str(keyword), str(file_path), "detail_container", "截图成功")
 
-            page.screenshot(path=str(file_path), full_page=True, timeout=self.timeout_ms)
-            self._validate_png(file_path)
-            return ScreenshotResult(str(keyword), str(file_path), "full_page", "截图成功")
+            if self._try_strategy(self._screenshot_body, page, file_path):
+                self._validate_png(file_path)
+                return ScreenshotResult(str(keyword), str(file_path), "body", "截图成功")
+
+            if hasattr(page, "screenshot"):
+                page.screenshot(path=str(file_path), full_page=True, timeout=self.timeout_ms)
+                self._validate_png(file_path)
+                return ScreenshotResult(str(keyword), str(file_path), "full_page", "截图成功")
+
+            raise ScreenshotServiceError("未找到可截图的邮件详情内容")
         except Exception as exc:
             raise ScreenshotServiceError(f"截图保存失败: {keyword}; {exc}") from exc
+
+    @staticmethod
+    def _try_strategy(strategy: Any, page: Any, file_path: Path) -> bool:
+        try:
+            return bool(strategy(page, file_path))
+        except Exception:
+            return False
 
     def _screenshot_title_to_qr(self, page: Any, file_path: Path) -> bool:
         title_locator = self._optional_visible_locator(page, MAIL_DETAIL_TITLE_SELECTORS, 3000)
@@ -104,6 +118,15 @@ class ScreenshotService:
 
         container_locator.screenshot(path=str(file_path), timeout=self.timeout_ms)
         return True
+
+    def _screenshot_body(self, page: Any, file_path: Path) -> bool:
+        try:
+            body = page.locator("body").first
+            body.wait_for(state="visible", timeout=self.timeout_ms)
+            body.screenshot(path=str(file_path), timeout=self.timeout_ms)
+            return True
+        except Exception:
+            return False
 
     def _optional_visible_locator(self, page: Any, selectors: tuple[str, ...], timeout_ms: int) -> Any | None:
         selector = ", ".join(selector for selector in selectors if selector.strip())

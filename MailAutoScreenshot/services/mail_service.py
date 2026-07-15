@@ -76,6 +76,7 @@ class MailService:
         self.timeout = max(1, timeout)
         self.timeout_ms = self.timeout * 1000
         self.log_callback = log_callback
+        self._detail_context: Any | None = None
 
     def open_mail(self) -> None:
         """Open 163 mail and wait for the first document load."""
@@ -156,6 +157,7 @@ class MailService:
         if not clean_keyword:
             raise MailServiceError("搜索关键词不能为空")
 
+        self._detail_context = None
         if not self.is_logged_in(timeout_ms=1000):
             raise LoginRequiredError("当前未检测到163邮箱登录状态，无法搜索邮件")
 
@@ -250,6 +252,11 @@ class MailService:
             self.timeout_ms,
             "邮件详情区域",
         )
+
+    def get_detail_context(self) -> Any:
+        """Return the Page or Frame that contains the opened mail detail."""
+
+        return self._detail_context or self.page
 
     def _any_visible(self, selectors: tuple[str, ...], timeout_ms: int) -> bool:
         selector = _join_selectors(selectors)
@@ -494,19 +501,37 @@ class MailService:
     def _wait_until_detail_opened(self, keyword: str) -> bool:
         tokens = _keyword_tokens(keyword)
         detail_selectors = _join_selectors(MAIL_DETAIL_CONTAINER_SELECTORS)
+        for context in self._page_and_frames():
+            if self._wait_context_has_mail_detail(context, tokens, detail_selectors):
+                self._detail_context = context
+                url = getattr(context, "url", "")
+                self._log(f"已确认进入邮件详情页: {url}")
+                return True
+
+        return False
+
+    def _page_and_frames(self) -> list[Any]:
+        contexts = [self.page]
         try:
-            self.page.wait_for_function(
+            contexts.extend(self.page.frames)
+        except Exception:
+            pass
+        return contexts
+
+    def _wait_context_has_mail_detail(self, context: Any, tokens: list[str], detail_selectors: str) -> bool:
+        try:
+            context.wait_for_function(
                 """
                 ({ tokens, detailSelector }) => {
                     const bodyText = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
-                    const stillSearchResultPage = /已搜索到\\s*\\d+\\s*封/.test(bodyText)
-                        && bodyText.includes("继续用AI");
-
-                    if (stillSearchResultPage) {
+                    if (!bodyText || !tokens.some((token) => bodyText.includes(token))) {
                         return false;
                     }
 
-                    if (!tokens.some((token) => bodyText.includes(token))) {
+                    const stillSearchResultPage = /已搜索到\\s*\\d+\\s*封/.test(bodyText)
+                        || bodyText.includes("继续用AI")
+                        || bodyText.includes("批量操作搜索更多邮件");
+                    if (stillSearchResultPage) {
                         return false;
                     }
 
@@ -515,6 +540,10 @@ class MailService:
                     }
 
                     const candidates = Array.from(document.querySelectorAll(detailSelector));
+                    if (!candidates.length) {
+                        return true;
+                    }
+
                     return candidates.some((element) => {
                         const rect = element.getBoundingClientRect();
                         const style = window.getComputedStyle(element);
@@ -528,9 +557,8 @@ class MailService:
                 }
                 """,
                 {"tokens": tokens, "detailSelector": detail_selectors},
-                timeout=self.timeout_ms,
+                timeout=3000,
             )
-            self._log("已确认进入邮件详情页。")
             return True
         except Exception:
             return False
