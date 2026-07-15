@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from services.task_service import TaskProgress, TaskService, TaskServiceError, TaskSummary
 from utils.config_manager import AppConfig, load_config, save_config
 
 
@@ -50,10 +51,18 @@ class MainWindow(QMainWindow):
     pause_requested = Signal()
     resume_requested = Signal()
     stop_requested = Signal()
+    task_log_received = Signal(str)
+    task_progress_received = Signal(object)
+    task_finished_received = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.config = self._load_initial_config()
+        self.task_service = TaskService(
+            on_log=self.task_log_received.emit,
+            on_progress=self.task_progress_received.emit,
+            on_finished=self.task_finished_received.emit,
+        )
         self.setWindowTitle("163邮箱自动搜索截图工具")
         self.resize(980, 680)
         self.setMinimumSize(860, 580)
@@ -177,6 +186,13 @@ class MainWindow(QMainWindow):
         self.pause_button.clicked.connect(self._handle_pause_clicked)
         self.resume_button.clicked.connect(self._handle_resume_clicked)
         self.stop_button.clicked.connect(self._handle_stop_clicked)
+        self.start_requested.connect(self._start_task)
+        self.pause_requested.connect(self.task_service.pause)
+        self.resume_requested.connect(self.task_service.resume)
+        self.stop_requested.connect(self.task_service.stop)
+        self.task_log_received.connect(self.append_log)
+        self.task_progress_received.connect(self._handle_task_progress)
+        self.task_finished_received.connect(self._handle_task_finished)
         self.save_dir_edit.editingFinished.connect(self._persist_config_safely)
         self.chrome_profile_edit.editingFinished.connect(self._persist_config_safely)
 
@@ -284,7 +300,7 @@ class MainWindow(QMainWindow):
 
         self.set_running_state()
         self.reset_progress()
-        self.append_log("收到开始任务请求，后续阶段将接入自动化流程。")
+        self.append_log("收到开始任务请求，正在启动后台任务。")
         self.start_requested.emit(options)
 
     @Slot()
@@ -303,9 +319,17 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _handle_stop_clicked(self) -> None:
-        self.set_idle_state()
+        self.set_stopping_state()
         self.append_log("收到停止请求。")
         self.stop_requested.emit()
+
+    @Slot(object)
+    def _start_task(self, options: TaskOptions) -> None:
+        try:
+            self.task_service.start(options)
+        except TaskServiceError as exc:
+            self.append_log(f"任务启动失败：{exc}")
+            self.set_idle_state()
 
     def _collect_task_options(self) -> TaskOptions | None:
         excel_path = self.excel_path_edit.text().strip()
@@ -373,6 +397,12 @@ class MainWindow(QMainWindow):
         self.resume_button.setEnabled(False)
         self.stop_button.setEnabled(True)
 
+    def set_stopping_state(self) -> None:
+        self.start_button.setEnabled(False)
+        self.pause_button.setEnabled(False)
+        self.resume_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+
     def reset_progress(self) -> None:
         self.total_value.setText("0")
         self.current_value.setText("-")
@@ -397,7 +427,37 @@ class MainWindow(QMainWindow):
         progress = int(current_index / total * 100) if total else 0
         self.progress_bar.setValue(max(0, min(progress, 100)))
 
+    @Slot(object)
+    def _handle_task_progress(self, progress: TaskProgress) -> None:
+        self.update_task_status(
+            progress.total,
+            progress.current_index,
+            progress.success_count,
+            progress.failed_count,
+            progress.current_name,
+        )
+
+    @Slot(object)
+    def _handle_task_finished(self, summary: TaskSummary) -> None:
+        self.set_idle_state()
+        self.update_task_status(
+            summary.total,
+            summary.total,
+            summary.success_count,
+            summary.failed_count,
+            "完成" if not summary.stopped else "已停止",
+        )
+        self.append_log(summary.message)
+        if summary.report_path:
+            self.append_log(f"任务报告：{summary.report_path}")
+
     @Slot(str)
     def append_log(self, message: str) -> None:
         self.log_text.appendPlainText(message)
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
+
+    def closeEvent(self, event) -> None:
+        if self.task_service.is_running:
+            self.task_service.stop()
+            self.append_log("窗口关闭，已请求停止后台任务。")
+        super().closeEvent(event)

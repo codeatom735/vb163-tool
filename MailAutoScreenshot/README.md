@@ -89,6 +89,23 @@ This stage implements screenshot saving:
 - Falls back to a full-page screenshot
 - Validates PNG output with Pillow
 
+## Stage 9
+
+This stage implements background task scheduling:
+
+- Runs the full workflow in a background thread
+- Keeps the PySide6 GUI responsive
+- Supports start, pause, resume, and stop
+- Reads Excel mail names
+- Starts the persistent Chrome browser
+- Waits for manual 163 login when needed
+- Searches and opens each mail
+- Saves screenshots using the Excel mail name
+- Continues after per-item failures
+- Emits real-time logs and progress to the GUI through Qt signals
+- Generates `task_report_YYYYMMDD_HHMMSS.csv` in the screenshot directory
+- Writes runtime logs to `logs/app.log`
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI
