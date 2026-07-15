@@ -19,6 +19,17 @@ This stage implements the PySide6 desktop shell:
 - Real-time log panel
 - UI signals for later task-service integration
 
+## Stage 3
+
+This stage implements configuration loading and saving:
+
+- Reads `config/config.json` on startup
+- Creates the config file with defaults if it is missing
+- Validates and normalizes `timeout`
+- Loads the default screenshot save path into the GUI
+- Loads the Chrome persistent profile directory into the GUI
+- Saves changed save/profile paths back to `config/config.json`
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI

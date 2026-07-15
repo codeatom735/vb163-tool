@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from utils.config_manager import AppConfig, load_config, save_config
+
 
 @dataclass(frozen=True)
 class TaskOptions:
@@ -33,6 +35,8 @@ class TaskOptions:
     excel_path: str
     save_dir: str
     chrome_profile: str
+    timeout: int
+    mail_url: str
 
 
 class MainWindow(QMainWindow):
@@ -49,13 +53,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        self.config = self._load_initial_config()
         self.setWindowTitle("163邮箱自动搜索截图工具")
         self.resize(980, 680)
         self.setMinimumSize(860, 580)
 
         self.excel_path_edit = QLineEdit()
-        self.save_dir_edit = QLineEdit()
-        self.chrome_profile_edit = QLineEdit("C:/MailAutoProfile")
+        self.save_dir_edit = QLineEdit(self.config.save_path)
+        self.chrome_profile_edit = QLineEdit(self.config.chrome_profile)
 
         self.total_value = QLabel("0")
         self.current_value = QLabel("-")
@@ -75,6 +80,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self.set_idle_state()
         self.append_log("界面已就绪，请选择Excel文件和截图保存目录。")
+        self.append_log(f"已加载配置：超时 {self.config.timeout} 秒。")
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -171,6 +177,8 @@ class MainWindow(QMainWindow):
         self.pause_button.clicked.connect(self._handle_pause_clicked)
         self.resume_button.clicked.connect(self._handle_resume_clicked)
         self.stop_button.clicked.connect(self._handle_stop_clicked)
+        self.save_dir_edit.editingFinished.connect(self._persist_config_safely)
+        self.chrome_profile_edit.editingFinished.connect(self._persist_config_safely)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -259,12 +267,14 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "选择截图保存目录")
         if directory:
             self.save_dir_edit.setText(directory)
+            self._persist_config_safely()
 
     @Slot()
     def _choose_chrome_profile_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择Chrome用户目录")
         if directory:
             self.chrome_profile_edit.setText(directory)
+            self._persist_config_safely()
 
     @Slot()
     def _handle_start_clicked(self) -> None:
@@ -319,7 +329,37 @@ class MainWindow(QMainWindow):
             excel_path=excel_path,
             save_dir=save_dir,
             chrome_profile=chrome_profile,
+            timeout=self.config.timeout,
+            mail_url=self.config.mail_url,
         )
+
+    def _load_initial_config(self) -> AppConfig:
+        try:
+            return load_config()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "配置读取失败",
+                f"配置文件读取失败，将使用默认配置。\n\n{exc}",
+            )
+            return AppConfig()
+
+    @Slot()
+    def _persist_config_safely(self) -> None:
+        updated_config = AppConfig(
+            chrome_profile=self.chrome_profile_edit.text().strip() or self.config.chrome_profile,
+            timeout=self.config.timeout,
+            save_path=self.save_dir_edit.text().strip() or self.config.save_path,
+            mail_url=self.config.mail_url,
+        )
+
+        try:
+            save_config(updated_config)
+        except Exception as exc:
+            self.append_log(f"配置保存失败：{exc}")
+            return
+
+        self.config = updated_config
 
     def set_idle_state(self) -> None:
         self.start_button.setEnabled(True)
