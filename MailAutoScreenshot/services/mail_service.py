@@ -200,6 +200,26 @@ class MailService:
             raise MailServiceError("邮件关键词不能为空")
 
         self._log(f"打开搜索结果: {clean_keyword}")
+        if self._click_search_result_by_dom(clean_keyword, double_click=False):
+            self._wait_for_loading_to_finish()
+            try:
+                self.wait_for_mail_detail(clean_keyword)
+                return MailOpenResult(
+                    keyword=clean_keyword,
+                    opened=True,
+                    message="邮件详情已打开",
+                )
+            except MailServiceError:
+                self._log("单击搜索结果后仍未进入详情页，尝试双击搜索结果。")
+                if self._click_search_result_by_dom(clean_keyword, double_click=True):
+                    self._wait_for_loading_to_finish()
+                    self.wait_for_mail_detail(clean_keyword)
+                    return MailOpenResult(
+                        keyword=clean_keyword,
+                        opened=True,
+                        message="邮件详情已打开",
+                    )
+
         result_locator = self._find_result_locator(clean_keyword)
 
         try:
@@ -219,15 +239,11 @@ class MailService:
     def wait_for_mail_detail(self, keyword: str) -> None:
         """Wait until the mail detail page is visible."""
 
-        for token in _keyword_tokens(keyword):
-            try:
-                self.page.get_by_text(token, exact=False).first.wait_for(
-                    state="visible",
-                    timeout=3000,
-                )
-                return
-            except Exception:
-                pass
+        if self._wait_until_detail_opened(keyword):
+            return
+
+        if self._is_still_search_result_page():
+            raise MailServiceError("点击搜索结果后仍停留在搜索结果页，未进入邮件详情")
 
         self._first_visible_locator(
             MAIL_DETAIL_CONTAINER_SELECTORS,
@@ -339,6 +355,188 @@ class MailService:
 
         return None
 
+    def _click_search_result_by_dom(self, keyword: str, double_click: bool = False) -> bool:
+        marker = f"mail-auto-result-{time.monotonic_ns()}"
+        result = self.page.evaluate(
+            """
+            ({ tokens, marker }) => {
+                const badTexts = [
+                    "已搜索到",
+                    "继续用AI",
+                    "完善条件",
+                    "追加问题",
+                    "批量操作",
+                    "全文搜索",
+                    "删除所有邮件"
+                ];
+                const selector = [
+                    "a",
+                    "tr",
+                    "li",
+                    "td",
+                    "div",
+                    "span",
+                    "[role='row']",
+                    "[role='gridcell']"
+                ].join(",");
+
+                function normalize(text) {
+                    return (text || "").replace(/\\s+/g, " ").trim();
+                }
+
+                function visible(element) {
+                    const rect = element.getBoundingClientRect();
+                    const style = window.getComputedStyle(element);
+                    return rect.width > 1
+                        && rect.height > 1
+                        && style.visibility !== "hidden"
+                        && style.display !== "none";
+                }
+
+                function badSearchHint(text) {
+                    return badTexts.some((bad) => text.includes(bad));
+                }
+
+                function clickableFor(element) {
+                    return element.closest("a,[role='button'],[role='row'],tr,li")
+                        || element.closest("div[class*='mail'],div[class*='Mail'],div[class*='item'],div[class*='Item'],div[class*='row'],div[class*='Row']")
+                        || element;
+                }
+
+                let best = null;
+                let bestScore = -1;
+                const elements = Array.from(document.querySelectorAll(selector));
+
+                for (const element of elements) {
+                    if (!visible(element)) {
+                        continue;
+                    }
+
+                    const text = normalize(element.innerText || element.textContent);
+                    if (!text || text.length > 700) {
+                        continue;
+                    }
+
+                    const matchedTokens = tokens.filter((token) => text.includes(token));
+                    if (!matchedTokens.length) {
+                        continue;
+                    }
+
+                    const isMailboxLine = text.includes("[收件箱]")
+                        || text.includes("收件箱")
+                        || text.includes("project_process");
+
+                    if (badSearchHint(text) && !isMailboxLine) {
+                        continue;
+                    }
+
+                    let score = 0;
+                    score += matchedTokens.reduce((sum, token) => sum + token.length, 0);
+                    if (text.includes(tokens[0])) score += 100;
+                    if (isMailboxLine) score += 220;
+                    if (element.matches("tr,li,[role='row'],a")) score += 40;
+                    if (/mail|Mail|item|Item|row|Row|subject|Subject|title|Title/.test(element.className || "")) {
+                        score += 30;
+                    }
+                    if (text.length < 260) score += 20;
+
+                    if (score > bestScore) {
+                        best = element;
+                        bestScore = score;
+                    }
+                }
+
+                if (!best) {
+                    return { found: false };
+                }
+
+                const clickable = clickableFor(best);
+                clickable.setAttribute("data-mail-auto-result-target", marker);
+                return {
+                    found: true,
+                    text: normalize(best.innerText || best.textContent).slice(0, 260),
+                    tag: clickable.tagName,
+                    score: bestScore
+                };
+            }
+            """,
+            {"tokens": _keyword_tokens(keyword), "marker": marker},
+        )
+
+        if not result or not result.get("found"):
+            return False
+
+        self._log(f"定位到真实搜索结果行: {result.get('text')}")
+        target = self.page.locator(f'[data-mail-auto-result-target="{marker}"]').first
+        target.wait_for(state="visible", timeout=self.timeout_ms)
+        target.scroll_into_view_if_needed(timeout=self.timeout_ms)
+        if double_click:
+            target.dblclick(timeout=self.timeout_ms)
+        else:
+            target.click(timeout=self.timeout_ms)
+        return True
+
+    def _wait_until_detail_opened(self, keyword: str) -> bool:
+        tokens = _keyword_tokens(keyword)
+        detail_selectors = _join_selectors(MAIL_DETAIL_CONTAINER_SELECTORS)
+        try:
+            self.page.wait_for_function(
+                """
+                ({ tokens, detailSelector }) => {
+                    const bodyText = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
+                    const stillSearchResultPage = /已搜索到\\s*\\d+\\s*封/.test(bodyText)
+                        && bodyText.includes("继续用AI");
+
+                    if (stillSearchResultPage) {
+                        return false;
+                    }
+
+                    if (!tokens.some((token) => bodyText.includes(token))) {
+                        return false;
+                    }
+
+                    if (!detailSelector) {
+                        return true;
+                    }
+
+                    const candidates = Array.from(document.querySelectorAll(detailSelector));
+                    return candidates.some((element) => {
+                        const rect = element.getBoundingClientRect();
+                        const style = window.getComputedStyle(element);
+                        const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ");
+                        return rect.width > 20
+                            && rect.height > 20
+                            && style.visibility !== "hidden"
+                            && style.display !== "none"
+                            && tokens.some((token) => text.includes(token));
+                    }) || tokens.some((token) => bodyText.includes(token));
+                }
+                """,
+                {"tokens": tokens, "detailSelector": detail_selectors},
+                timeout=self.timeout_ms,
+            )
+            self._log("已确认进入邮件详情页。")
+            return True
+        except Exception:
+            return False
+
+    def _is_still_search_result_page(self) -> bool:
+        try:
+            return bool(
+                self.page.evaluate(
+                    """
+                    () => {
+                        const text = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
+                        return /已搜索到\\s*\\d+\\s*封/.test(text)
+                            || text.includes("继续用AI")
+                            || text.includes("批量操作搜索更多邮件");
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
+
     def _wait_for_loading_to_finish(self) -> None:
         loading_selector = _join_selectors(SEARCH_LOADING_SELECTORS)
         if loading_selector:
@@ -384,7 +582,7 @@ def _keyword_tokens(keyword: str) -> list[str]:
 
     tokens: list[str] = []
     for token in raw_tokens:
-        if len(token) < 3:
+        if len(token) < 3 and not _has_cjk(token):
             continue
         if token not in tokens:
             tokens.append(token)
@@ -395,3 +593,7 @@ def _keyword_tokens(keyword: str) -> list[str]:
 
 def _escape_css_text(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)

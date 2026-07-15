@@ -125,4 +125,7 @@ class ScreenshotService:
             raise ScreenshotServiceError("未安装Pillow，请先执行: pip install -r requirements.txt") from exc
 
         with Image.open(file_path) as image:
+            width, height = image.size
+            if width < 200 or height < 120:
+                raise ScreenshotServiceError(f"截图尺寸异常: {width}x{height}")
             image.verify()
