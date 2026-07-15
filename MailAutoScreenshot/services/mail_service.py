@@ -369,16 +369,6 @@ class MailService:
                     "全文搜索",
                     "删除所有邮件"
                 ];
-                const selector = [
-                    "a",
-                    "tr",
-                    "li",
-                    "td",
-                    "div",
-                    "span",
-                    "[role='row']",
-                    "[role='gridcell']"
-                ].join(",");
 
                 function normalize(text) {
                     return (text || "").replace(/\\s+/g, " ").trim();
@@ -397,66 +387,91 @@ class MailService:
                     return badTexts.some((bad) => text.includes(bad));
                 }
 
-                function clickableFor(element) {
-                    return element.closest("a,[role='button'],[role='row'],tr,li")
-                        || element.closest("div[class*='mail'],div[class*='Mail'],div[class*='item'],div[class*='Item'],div[class*='row'],div[class*='Row']")
-                        || element;
+                function mailboxContext(text) {
+                    return text.includes("[收件箱]")
+                        || text.includes("收件箱")
+                        || text.includes("project_process");
                 }
 
                 let best = null;
                 let bestScore = -1;
-                const elements = Array.from(document.querySelectorAll(selector));
 
-                for (const element of elements) {
-                    if (!visible(element)) {
+                const walker = document.createTreeWalker(
+                    document.body,
+                    NodeFilter.SHOW_TEXT,
+                    {
+                        acceptNode(node) {
+                            const text = normalize(node.nodeValue);
+                            if (!text || !tokens.some((token) => text.includes(token))) {
+                                return NodeFilter.FILTER_REJECT;
+                            }
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    }
+                );
+
+                let node = walker.nextNode();
+                while (node) {
+                    const nodeText = normalize(node.nodeValue);
+                    const parent = node.parentElement;
+                    if (!parent || !visible(parent)) {
+                        node = walker.nextNode();
                         continue;
                     }
 
-                    const text = normalize(element.innerText || element.textContent);
-                    if (!text || text.length > 700) {
-                        continue;
+                    const matchedTokens = tokens.filter((token) => nodeText.includes(token));
+                    let ancestor = parent;
+                    let depth = 0;
+                    while (ancestor && ancestor !== document.body && depth < 8) {
+                        if (visible(ancestor)) {
+                            const contextText = normalize(ancestor.innerText || ancestor.textContent);
+                            if (contextText && contextText.length <= 900) {
+                                const hasMailbox = mailboxContext(contextText);
+                                const hasBadHint = badSearchHint(contextText);
+                                if (!hasBadHint || hasMailbox) {
+                                    let score = 0;
+                                    score += matchedTokens.reduce((sum, token) => sum + token.length * 3, 0);
+                                    if (nodeText.includes(tokens[0])) score += 260;
+                                    if (contextText.includes(tokens[0])) score += 160;
+                                    if (hasMailbox) score += 500;
+                                    if (contextText.includes("project_process")) score += 160;
+                                    if (contextText.includes("[收件箱]")) score += 180;
+                                    if (!hasBadHint) score += 120;
+                                    if (ancestor.matches("span,a,td,tr,li,[role='row']")) score += 80;
+                                    score += Math.max(0, 320 - contextText.length);
+                                    score -= depth * 25;
+
+                                    const target = parent;
+                                    if (score > bestScore) {
+                                        best = {
+                                            element: target,
+                                            text: contextText,
+                                            nodeText,
+                                            score
+                                        };
+                                        bestScore = score;
+                                    }
+                                }
+                            }
+                        }
+                        ancestor = ancestor.parentElement;
+                        depth += 1;
                     }
 
-                    const matchedTokens = tokens.filter((token) => text.includes(token));
-                    if (!matchedTokens.length) {
-                        continue;
-                    }
-
-                    const isMailboxLine = text.includes("[收件箱]")
-                        || text.includes("收件箱")
-                        || text.includes("project_process");
-
-                    if (badSearchHint(text) && !isMailboxLine) {
-                        continue;
-                    }
-
-                    let score = 0;
-                    score += matchedTokens.reduce((sum, token) => sum + token.length, 0);
-                    if (text.includes(tokens[0])) score += 100;
-                    if (isMailboxLine) score += 220;
-                    if (element.matches("tr,li,[role='row'],a")) score += 40;
-                    if (/mail|Mail|item|Item|row|Row|subject|Subject|title|Title/.test(element.className || "")) {
-                        score += 30;
-                    }
-                    if (text.length < 260) score += 20;
-
-                    if (score > bestScore) {
-                        best = element;
-                        bestScore = score;
-                    }
+                    node = walker.nextNode();
                 }
 
                 if (!best) {
                     return { found: false };
                 }
 
-                const clickable = clickableFor(best);
-                clickable.setAttribute("data-mail-auto-result-target", marker);
+                best.element.setAttribute("data-mail-auto-result-target", marker);
                 return {
                     found: true,
-                    text: normalize(best.innerText || best.textContent).slice(0, 260),
-                    tag: clickable.tagName,
-                    score: bestScore
+                    text: best.text.slice(0, 260),
+                    nodeText: best.nodeText.slice(0, 260),
+                    tag: best.element.tagName,
+                    score: best.score
                 };
             }
             """,
@@ -466,7 +481,7 @@ class MailService:
         if not result or not result.get("found"):
             return False
 
-        self._log(f"定位到真实搜索结果行: {result.get('text')}")
+        self._log(f"定位到搜索结果标题文本: {result.get('nodeText')}")
         target = self.page.locator(f'[data-mail-auto-result-target="{marker}"]').first
         target.wait_for(state="visible", timeout=self.timeout_ms)
         target.scroll_into_view_if_needed(timeout=self.timeout_ms)
