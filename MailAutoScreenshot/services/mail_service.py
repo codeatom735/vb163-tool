@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -11,6 +12,7 @@ from services.selectors import (
     AUTHENTICATED_URL_KEYWORDS,
     LOGIN_MARKER_SELECTORS,
     MAIL_DETAIL_CONTAINER_SELECTORS,
+    MAIL_RESULT_CLICKABLE_SELECTORS,
     MAIL_RESULT_ITEM_SELECTORS,
     SEARCH_BUTTON_SELECTORS,
     SEARCH_INPUT_SELECTORS,
@@ -217,14 +219,15 @@ class MailService:
     def wait_for_mail_detail(self, keyword: str) -> None:
         """Wait until the mail detail page is visible."""
 
-        try:
-            self.page.get_by_text(keyword, exact=False).first.wait_for(
-                state="visible",
-                timeout=self.timeout_ms,
-            )
-            return
-        except Exception:
-            pass
+        for token in _keyword_tokens(keyword):
+            try:
+                self.page.get_by_text(token, exact=False).first.wait_for(
+                    state="visible",
+                    timeout=3000,
+                )
+                return
+            except Exception:
+                pass
 
         self._first_visible_locator(
             MAIL_DETAIL_CONTAINER_SELECTORS,
@@ -274,6 +277,19 @@ class MailService:
         self._wait_for_loading_to_finish()
 
     def _wait_for_search_result(self, keyword: str) -> None:
+        self._wait_for_loading_to_finish()
+
+        for token in _keyword_tokens(keyword):
+            try:
+                self.page.get_by_text(token, exact=False).first.wait_for(
+                    state="visible",
+                    timeout=self.timeout_ms,
+                )
+                self._log(f"搜索结果已出现关键词片段: {token}")
+                return
+            except Exception:
+                pass
+
         try:
             result_area = self._first_visible_locator(
                 SEARCH_RESULT_AREA_SELECTORS,
@@ -281,31 +297,47 @@ class MailService:
                 "搜索结果区域",
             )
             result_area.wait_for(state="visible", timeout=self.timeout_ms)
-            return
         except MailServiceError:
             pass
 
         try:
-            self.page.get_by_text(keyword, exact=False).first.wait_for(
-                state="visible",
-                timeout=self.timeout_ms,
-            )
+            self._first_visible_locator(MAIL_RESULT_ITEM_SELECTORS, self.timeout_ms, "搜索结果邮件")
         except Exception as exc:
             raise MailServiceError(f"搜索后未检测到结果区域或关键词: {keyword}") from exc
 
     def _find_result_locator(self, keyword: str) -> Any:
-        try:
-            keyword_locator = self.page.get_by_text(keyword, exact=False).first
-            keyword_locator.wait_for(state="visible", timeout=3000)
-            return keyword_locator
-        except Exception:
-            pass
+        for token in _keyword_tokens(keyword):
+            locator = self._try_result_row_by_text(token)
+            if locator is not None:
+                self._log(f"定位到搜索结果邮件片段: {token}")
+                return locator
+
+        for token in _keyword_tokens(keyword):
+            try:
+                keyword_locator = self.page.get_by_text(token, exact=False).first
+                keyword_locator.wait_for(state="visible", timeout=3000)
+                self._log(f"定位到搜索结果文本片段: {token}")
+                return keyword_locator
+            except Exception:
+                pass
 
         return self._first_visible_locator(
             MAIL_RESULT_ITEM_SELECTORS,
             self.timeout_ms,
             "搜索结果邮件",
         )
+
+    def _try_result_row_by_text(self, token: str) -> Any | None:
+        escaped_token = _escape_css_text(token)
+        for selector in MAIL_RESULT_CLICKABLE_SELECTORS:
+            try:
+                locator = self.page.locator(f'{selector}:has-text("{escaped_token}")').first
+                locator.wait_for(state="visible", timeout=2000)
+                return locator
+            except Exception:
+                pass
+
+        return None
 
     def _wait_for_loading_to_finish(self) -> None:
         loading_selector = _join_selectors(SEARCH_LOADING_SELECTORS)
@@ -341,3 +373,25 @@ class MailService:
 
 def _join_selectors(selectors: tuple[str, ...]) -> str:
     return ", ".join(selector for selector in selectors if selector.strip())
+
+
+def _keyword_tokens(keyword: str) -> list[str]:
+    """Return search-result text fragments likely to appear in highlighted DOM."""
+
+    clean_keyword = keyword.strip()
+    raw_tokens = [clean_keyword]
+    raw_tokens.extend(part.strip() for part in re.split(r"[_\s]+", clean_keyword) if part.strip())
+
+    tokens: list[str] = []
+    for token in raw_tokens:
+        if len(token) < 3:
+            continue
+        if token not in tokens:
+            tokens.append(token)
+
+    tokens.sort(key=len, reverse=True)
+    return tokens[:8]
+
+
+def _escape_css_text(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')

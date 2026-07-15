@@ -76,8 +76,26 @@ MAIL_RESULT_ITEM_SELECTORS = (
     "[class*='mailList'] [role='row']",
     "[class*='mail-list'] li",
     "[class*='mailList'] li",
+    "[class*='mail-list'] div",
+    "[class*='mailList'] div",
     "[class*='result'] [role='row']",
     "[class*='result'] li",
+    "[class*='result'] div",
+    "tr",
+)
+
+MAIL_RESULT_CLICKABLE_SELECTORS = (
+    "[class*='mail-list'] [role='row']",
+    "[class*='mailList'] [role='row']",
+    "[class*='mail-list'] li",
+    "[class*='mailList'] li",
+    "[class*='result'] [role='row']",
+    "[class*='result'] li",
+    "[class*='subject']",
+    "[class*='Subject']",
+    "[class*='title']",
+    "[class*='Title']",
+    "a",
     "tr",
 )
 
@@ -127,6 +145,7 @@ MAIL_SELECTORS = {
     "search_result_area": SEARCH_RESULT_AREA_SELECTORS,
     "search_loading": SEARCH_LOADING_SELECTORS,
     "mail_result_item": MAIL_RESULT_ITEM_SELECTORS,
+    "mail_result_clickable": MAIL_RESULT_CLICKABLE_SELECTORS,
     "mail_detail_container": MAIL_DETAIL_CONTAINER_SELECTORS,
     "mail_detail_title": MAIL_DETAIL_TITLE_SELECTORS,
     "mail_detail_qr_code": MAIL_DETAIL_QR_CODE_SELECTORS,
