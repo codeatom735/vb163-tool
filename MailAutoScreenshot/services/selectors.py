@@ -42,19 +42,33 @@ AUTHENTICATED_MARKER_SELECTORS = (
 SEARCH_INPUT_SELECTORS = (
     "input[placeholder*='搜索']",
     "input[aria-label*='搜索']",
+    "input[title*='搜索']",
+    "input[class*='search']",
+    "input[id*='search']",
     "[role='searchbox']",
+    "[contenteditable='true'][aria-label*='搜索']",
 )
 
 SEARCH_BUTTON_SELECTORS = (
     "button[aria-label*='搜索']",
+    "button[title*='搜索']",
     "[title*='搜索']",
     "[role='button'][aria-label*='搜索']",
+    "[class*='search'][role='button']",
 )
 
 SEARCH_RESULT_AREA_SELECTORS = (
     "[id*='dvContainer']",
     "[class*='mail-list']",
+    "[class*='mailList']",
+    "[class*='result']",
     "[class*='search']",
+)
+
+SEARCH_LOADING_SELECTORS = (
+    "[class*='loading']",
+    "[id*='loading']",
+    "[aria-busy='true']",
 )
 
 MAIL_SELECTORS = {
@@ -63,4 +77,5 @@ MAIL_SELECTORS = {
     "search_input": SEARCH_INPUT_SELECTORS,
     "search_button": SEARCH_BUTTON_SELECTORS,
     "search_result_area": SEARCH_RESULT_AREA_SELECTORS,
+    "search_loading": SEARCH_LOADING_SELECTORS,
 }

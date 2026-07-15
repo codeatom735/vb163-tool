@@ -64,6 +64,18 @@ This stage implements Excel reading:
 - Returns `list[str]`
 - Handles missing files, unsupported formats, missing sheets, and empty data
 
+## Stage 7
+
+This stage implements mail search:
+
+- Locates the 163 search input with centralized selectors
+- Fills the mail name keyword
+- Clicks the search button when available
+- Falls back to pressing Enter from the search input
+- Waits for loading/result indicators with Playwright wait APIs
+- Returns a structured `MailSearchResult`
+- Does not use mouse coordinates or fixed sleeps
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI

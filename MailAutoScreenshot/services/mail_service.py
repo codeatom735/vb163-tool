@@ -10,6 +10,10 @@ from services.selectors import (
     AUTHENTICATED_MARKER_SELECTORS,
     AUTHENTICATED_URL_KEYWORDS,
     LOGIN_MARKER_SELECTORS,
+    SEARCH_BUTTON_SELECTORS,
+    SEARCH_INPUT_SELECTORS,
+    SEARCH_LOADING_SELECTORS,
+    SEARCH_RESULT_AREA_SELECTORS,
 )
 
 
@@ -28,6 +32,15 @@ class LoginCheckResult:
     is_logged_in: bool
     reason: str
     current_url: str
+
+
+@dataclass(frozen=True)
+class MailSearchResult:
+    """Result of a single mail search operation."""
+
+    keyword: str
+    result_detected: bool
+    message: str
 
 
 class MailService:
@@ -123,6 +136,43 @@ class MailService:
             f"等待用户登录超时，最后状态: {last_state.reason}; URL: {last_state.current_url}"
         )
 
+    def search_mail(self, keyword: str) -> MailSearchResult:
+        """Search one mail keyword and wait for the result area."""
+
+        clean_keyword = keyword.strip()
+        if not clean_keyword:
+            raise MailServiceError("搜索关键词不能为空")
+
+        if not self.is_logged_in(timeout_ms=1000):
+            raise LoginRequiredError("当前未检测到163邮箱登录状态，无法搜索邮件")
+
+        self._log(f"搜索邮件: {clean_keyword}")
+        search_input = self._first_visible_locator(
+            SEARCH_INPUT_SELECTORS,
+            self.timeout_ms,
+            "搜索框",
+        )
+
+        try:
+            search_input.click(timeout=self.timeout_ms)
+            search_input.fill(clean_keyword, timeout=self.timeout_ms)
+        except Exception:
+            try:
+                search_input.press("Control+A", timeout=self.timeout_ms)
+                search_input.press("Backspace", timeout=self.timeout_ms)
+                search_input.type(clean_keyword, timeout=self.timeout_ms)
+            except Exception as exc:
+                raise MailServiceError(f"输入搜索关键词失败: {clean_keyword}; {exc}") from exc
+
+        self._trigger_search(search_input)
+        self._wait_for_search_result(clean_keyword)
+
+        return MailSearchResult(
+            keyword=clean_keyword,
+            result_detected=True,
+            message="搜索完成",
+        )
+
     def _any_visible(self, selectors: tuple[str, ...], timeout_ms: int) -> bool:
         selector = _join_selectors(selectors)
         if not selector:
@@ -133,6 +183,72 @@ class MailService:
             return True
         except Exception:
             return False
+
+    def _first_visible_locator(self, selectors: tuple[str, ...], timeout_ms: int, name: str) -> Any:
+        selector = _join_selectors(selectors)
+        if not selector:
+            raise MailServiceError(f"未配置{name}选择器")
+
+        locator = self.page.locator(selector).first
+        try:
+            locator.wait_for(state="visible", timeout=timeout_ms)
+            return locator
+        except Exception as exc:
+            raise MailServiceError(f"未找到可见的{name}") from exc
+
+    def _trigger_search(self, search_input: Any) -> None:
+        try:
+            search_button = self._first_visible_locator(
+                SEARCH_BUTTON_SELECTORS,
+                2000,
+                "搜索按钮",
+            )
+            search_button.click(timeout=self.timeout_ms)
+        except MailServiceError:
+            try:
+                search_input.press("Enter", timeout=self.timeout_ms)
+            except Exception as exc:
+                raise MailServiceError(f"触发搜索失败: {exc}") from exc
+        except Exception as exc:
+            raise MailServiceError(f"点击搜索按钮失败: {exc}") from exc
+
+        self._wait_for_loading_to_finish()
+
+    def _wait_for_search_result(self, keyword: str) -> None:
+        try:
+            result_area = self._first_visible_locator(
+                SEARCH_RESULT_AREA_SELECTORS,
+                self.timeout_ms,
+                "搜索结果区域",
+            )
+            result_area.wait_for(state="visible", timeout=self.timeout_ms)
+            return
+        except MailServiceError:
+            pass
+
+        try:
+            self.page.get_by_text(keyword, exact=False).first.wait_for(
+                state="visible",
+                timeout=self.timeout_ms,
+            )
+        except Exception as exc:
+            raise MailServiceError(f"搜索后未检测到结果区域或关键词: {keyword}") from exc
+
+    def _wait_for_loading_to_finish(self) -> None:
+        loading_selector = _join_selectors(SEARCH_LOADING_SELECTORS)
+        if loading_selector:
+            try:
+                self.page.locator(loading_selector).first.wait_for(
+                    state="hidden",
+                    timeout=self.timeout_ms,
+                )
+            except Exception:
+                pass
+
+        try:
+            self.page.wait_for_load_state("domcontentloaded", timeout=self.timeout_ms)
+        except Exception:
+            pass
 
     def _safe_current_url(self) -> str:
         try:
