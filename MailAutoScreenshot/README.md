@@ -41,6 +41,17 @@ This stage implements the Playwright browser wrapper:
 - Provides `start`, `open_url`, `get_page`, `get_context`, and `close`
 - Avoids fixed sleeps; later services will use locators and wait APIs
 
+## Stage 5
+
+This stage implements 163 login detection:
+
+- Opens 163 mail
+- Detects whether the mailbox main page is already logged in
+- Detects login pages/forms without entering credentials
+- Waits for the user to complete QR/manual login
+- Uses Playwright locator `wait_for` instead of fixed sleeps
+- Keeps all 163 selectors centralized in `services/selectors.py`
+
 Business logic will be implemented stage by stage:
 
 - Stage 2: PySide6 GUI
