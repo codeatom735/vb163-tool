@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -164,6 +165,7 @@ class TaskService:
                 self._emit_progress(total, index, success_count, failed_count, keyword)
                 try:
                     mail_service.search_and_open_mail(keyword)
+                    time.sleep(0.2)
                     screenshot = screenshot_service.save_mail_detail_screenshot(
                         page=mail_service.get_detail_context(),
                         keyword=keyword,

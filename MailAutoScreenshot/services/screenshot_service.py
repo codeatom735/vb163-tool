@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,30 +41,37 @@ class ScreenshotService:
         """Save a screenshot using the original Excel content as filename.
 
         Priority:
-        1. Clip from mail title to the bottom of the QR code.
-        2. Screenshot the mail detail container.
-        3. Screenshot the full page.
+        1. Screenshot the current opened mail page.
+        2. Fall back to visible body/container screenshots.
         """
 
         file_path = unique_path(save_dir, safe_filename(keyword))
 
         try:
-            if self._try_strategy(self._screenshot_title_to_qr, page, file_path):
+            if hasattr(page, "screenshot"):
+                page.screenshot(path=str(file_path), full_page=True, timeout=self.timeout_ms)
                 self._validate_png(file_path)
-                return ScreenshotResult(str(keyword), str(file_path), "title_to_qr", "截图成功")
-
-            if self._try_strategy(self._screenshot_detail_container, page, file_path):
-                self._validate_png(file_path)
-                return ScreenshotResult(str(keyword), str(file_path), "detail_container", "截图成功")
+                return ScreenshotResult(str(keyword), str(file_path), "full_page", "截图成功")
 
             if self._try_strategy(self._screenshot_body, page, file_path):
                 self._validate_png(file_path)
                 return ScreenshotResult(str(keyword), str(file_path), "body", "截图成功")
 
-            if hasattr(page, "screenshot"):
-                page.screenshot(path=str(file_path), full_page=True, timeout=self.timeout_ms)
+            if self._try_strategy(self._screenshot_title_to_qr, page, file_path):
                 self._validate_png(file_path)
-                return ScreenshotResult(str(keyword), str(file_path), "full_page", "截图成功")
+                return ScreenshotResult(str(keyword), str(file_path), "title_to_qr", "截图成功")
+
+            if self._try_strategy(
+                lambda current_page, current_file: self._screenshot_keyword_area(current_page, keyword, current_file),
+                page,
+                file_path,
+            ):
+                self._validate_png(file_path)
+                return ScreenshotResult(str(keyword), str(file_path), "keyword_area", "截图成功")
+
+            if self._try_strategy(self._screenshot_detail_container, page, file_path):
+                self._validate_png(file_path)
+                return ScreenshotResult(str(keyword), str(file_path), "detail_container", "截图成功")
 
             raise ScreenshotServiceError("未找到可截图的邮件详情内容")
         except Exception as exc:
@@ -105,6 +114,82 @@ class ScreenshotService:
             "height": max(1, bottom - y),
         }
         page.screenshot(path=str(file_path), clip=clip, timeout=self.timeout_ms)
+        return True
+
+    def _screenshot_keyword_area(self, page: Any, keyword: str, file_path: Path) -> bool:
+        tokens = _identity_tokens(keyword)
+        if not tokens:
+            return False
+
+        marker = f"mail-auto-screenshot-{time.monotonic_ns()}"
+        result = page.evaluate(
+            """
+            ({ tokens, marker }) => {
+                function normalize(text) {
+                    return (text || "").replace(/\\s+/g, " ").trim();
+                }
+
+                function visible(element) {
+                    const rect = element.getBoundingClientRect();
+                    const style = window.getComputedStyle(element);
+                    return rect.width >= 200
+                        && rect.height >= 120
+                        && style.visibility !== "hidden"
+                        && style.display !== "none";
+                }
+
+                function containsIdentity(text) {
+                    const normalized = normalize(text);
+                    const matchedCount = tokens.filter((token) => normalized.includes(token)).length;
+                    const requiredCount = tokens.length >= 2 ? 2 : 1;
+                    return matchedCount >= requiredCount;
+                }
+
+                const detailSignals = ["发件人", "收件人", "时 间", "时间", "附件", "回复", "转发", "打印"];
+                const searchHints = ["已搜索到", "继续用AI", "批量操作", "全文搜索", "删除所有邮件"];
+                let best = null;
+                let bestScore = -1;
+
+                for (const element of Array.from(document.querySelectorAll("div,section,article,main,td,iframe,body"))) {
+                    if (!visible(element)) {
+                        continue;
+                    }
+
+                    const text = normalize(element.innerText || element.textContent);
+                    if (!containsIdentity(text)) {
+                        continue;
+                    }
+
+                    const rect = element.getBoundingClientRect();
+                    let score = 0;
+                    score += detailSignals.filter((signal) => text.includes(signal)).length * 220;
+                    score += Math.min(rect.width, 1200) + Math.min(rect.height, 1600);
+                    score -= searchHints.filter((hint) => text.includes(hint)).length * 350;
+                    score -= element.tagName === "BODY" ? 500 : 0;
+                    score -= Math.max(0, text.length - 2500) / 10;
+
+                    if (score > bestScore) {
+                        best = element;
+                        bestScore = score;
+                    }
+                }
+
+                if (!best) {
+                    return { found: false };
+                }
+
+                best.setAttribute("data-mail-auto-screenshot-target", marker);
+                return { found: true, tag: best.tagName, score: bestScore };
+            }
+            """,
+            {"tokens": tokens, "marker": marker},
+        )
+        if not result or not result.get("found"):
+            return False
+
+        locator = page.locator(f'[data-mail-auto-screenshot-target="{marker}"]').first
+        locator.wait_for(state="visible", timeout=self.timeout_ms)
+        locator.screenshot(path=str(file_path), timeout=self.timeout_ms)
         return True
 
     def _screenshot_detail_container(self, page: Any, file_path: Path) -> bool:
@@ -152,3 +237,25 @@ class ScreenshotService:
             if width < 200 or height < 120:
                 raise ScreenshotServiceError(f"截图尺寸异常: {width}x{height}")
             image.verify()
+
+
+def _identity_tokens(keyword: str) -> list[str]:
+    clean_keyword = keyword.strip()
+    raw_parts = [part.strip() for part in re.split(r"[_\s]+", clean_keyword) if part.strip()]
+
+    tokens: list[str] = []
+    if clean_keyword:
+        tokens.append(clean_keyword)
+
+    for part in raw_parts:
+        upper_part = part.upper()
+        has_digit = any(char.isdigit() for char in part)
+        has_cjk = any("\u4e00" <= char <= "\u9fff" for char in part)
+        looks_like_code = bool(re.search(r"[A-Z]{1,}-[A-Z0-9-]{6,}", upper_part))
+
+        if looks_like_code or (has_digit and len(part) >= 8) or (has_cjk and len(part) >= 3 and part != "结题通知"):
+            if part not in tokens:
+                tokens.append(part)
+
+    tokens.sort(key=len, reverse=True)
+    return tokens[:6]

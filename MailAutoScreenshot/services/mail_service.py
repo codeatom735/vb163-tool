@@ -169,13 +169,16 @@ class MailService:
         )
 
         try:
-            search_input.click(timeout=self.timeout_ms)
+            self._activate_search_input(search_input)
             search_input.fill(clean_keyword, timeout=self.timeout_ms)
+            self._activate_search_input(search_input)
         except Exception:
             try:
-                search_input.press("Control+A", timeout=self.timeout_ms)
-                search_input.press("Backspace", timeout=self.timeout_ms)
+                self._activate_search_input(search_input)
+                self.page.keyboard.press("Control+A")
+                self.page.keyboard.press("Backspace")
                 search_input.type(clean_keyword, timeout=self.timeout_ms)
+                self._activate_search_input(search_input)
             except Exception as exc:
                 raise MailServiceError(f"输入搜索关键词失败: {clean_keyword}; {exc}") from exc
 
@@ -247,11 +250,14 @@ class MailService:
         if self._is_still_search_result_page():
             raise MailServiceError("点击搜索结果后仍停留在搜索结果页，未进入邮件详情")
 
-        self._first_visible_locator(
-            MAIL_DETAIL_CONTAINER_SELECTORS,
-            self.timeout_ms,
-            "邮件详情区域",
-        )
+        for context in self._page_and_frames():
+            if self._context_looks_like_open_mail_view(context, keyword):
+                self._detail_context = context
+                url = getattr(context, "url", "")
+                self._log(f"已进入邮件内部，未匹配到固定详情容器，按当前页面继续截图: {url}")
+                return
+
+        raise MailServiceError("点击搜索结果后未确认进入邮件内部，已停止截图避免截到搜索结果页")
 
     def get_detail_context(self) -> Any:
         """Return the Page or Frame that contains the opened mail detail."""
@@ -282,6 +288,8 @@ class MailService:
             raise MailServiceError(f"未找到可见的{name}") from exc
 
     def _trigger_search(self, search_input: Any) -> None:
+        self._activate_search_input(search_input)
+
         try:
             search_button = self._first_visible_locator(
                 SEARCH_BUTTON_SELECTORS,
@@ -291,18 +299,55 @@ class MailService:
             search_button.click(timeout=self.timeout_ms)
         except MailServiceError:
             try:
-                search_input.press("Enter", timeout=self.timeout_ms)
+                self._activate_search_input(search_input)
+                self.page.keyboard.press("Enter")
             except Exception as exc:
                 raise MailServiceError(f"触发搜索失败: {exc}") from exc
         except Exception as exc:
-            raise MailServiceError(f"点击搜索按钮失败: {exc}") from exc
+            try:
+                self._activate_search_input(search_input)
+                self.page.keyboard.press("Enter")
+            except Exception:
+                raise MailServiceError(f"点击搜索按钮失败: {exc}") from exc
 
         self._wait_for_loading_to_finish()
+
+    def _activate_search_input(self, search_input: Any) -> None:
+        try:
+            self.page.bring_to_front()
+        except Exception:
+            pass
+
+        try:
+            search_input.scroll_into_view_if_needed(timeout=self.timeout_ms)
+        except Exception:
+            pass
+
+        try:
+            search_input.click(timeout=self.timeout_ms, force=True)
+        except Exception:
+            search_input.click(timeout=self.timeout_ms)
+
+        try:
+            search_input.evaluate(
+                """
+                (element) => {
+                    element.focus();
+                    if (typeof element.select === "function") {
+                        element.select();
+                    }
+                }
+                """
+            )
+        except Exception:
+            pass
+
+        time.sleep(0.05)
 
     def _wait_for_search_result(self, keyword: str) -> None:
         self._wait_for_loading_to_finish()
 
-        for token in _keyword_tokens(keyword):
+        for token in _identity_tokens(keyword) + _keyword_tokens(keyword):
             try:
                 self.page.get_by_text(token, exact=False).first.wait_for(
                     state="visible",
@@ -329,13 +374,13 @@ class MailService:
             raise MailServiceError(f"搜索后未检测到结果区域或关键词: {keyword}") from exc
 
     def _find_result_locator(self, keyword: str) -> Any:
-        for token in _keyword_tokens(keyword):
+        for token in _identity_tokens(keyword) + _keyword_tokens(keyword):
             locator = self._try_result_row_by_text(token)
             if locator is not None:
                 self._log(f"定位到搜索结果邮件片段: {token}")
                 return locator
 
-        for token in _keyword_tokens(keyword):
+        for token in _identity_tokens(keyword) + _keyword_tokens(keyword):
             try:
                 keyword_locator = self.page.get_by_text(token, exact=False).first
                 keyword_locator.wait_for(state="visible", timeout=3000)
@@ -366,7 +411,7 @@ class MailService:
         marker = f"mail-auto-result-{time.monotonic_ns()}"
         result = self.page.evaluate(
             """
-            ({ tokens, marker }) => {
+            ({ tokens, identityTokens, marker }) => {
                 const badTexts = [
                     "已搜索到",
                     "继续用AI",
@@ -398,6 +443,34 @@ class MailService:
                     return text.includes("[收件箱]")
                         || text.includes("收件箱")
                         || text.includes("project_process");
+                }
+
+                function identityMatched(text) {
+                    if (!identityTokens.length) {
+                        return true;
+                    }
+                    const matchedCount = identityTokens.filter((token) => text.includes(token)).length;
+                    const requiredCount = identityTokens.length >= 2 ? 2 : 1;
+                    return matchedCount >= requiredCount;
+                }
+
+                function clickableTarget(element) {
+                    let current = element;
+                    let depth = 0;
+                    while (current && current !== document.body && depth < 8) {
+                        if (visible(current)) {
+                            if (current.matches("a,button,[role='button'],[role='link'],[role='row'],tr,li,[class*='mail'],[class*='Mail'],[class*='result'],[class*='Result'],[class*='subject'],[class*='Subject'],[class*='title'],[class*='Title']")) {
+                                return current;
+                            }
+                            const style = window.getComputedStyle(current);
+                            if (style.cursor === "pointer" || current.onclick) {
+                                return current;
+                            }
+                        }
+                        current = current.parentElement;
+                        depth += 1;
+                    }
+                    return element;
                 }
 
                 let best = null;
@@ -433,6 +506,12 @@ class MailService:
                         if (visible(ancestor)) {
                             const contextText = normalize(ancestor.innerText || ancestor.textContent);
                             if (contextText && contextText.length <= 900) {
+                                if (!identityMatched(contextText)) {
+                                    ancestor = ancestor.parentElement;
+                                    depth += 1;
+                                    continue;
+                                }
+
                                 const hasMailbox = mailboxContext(contextText);
                                 const hasBadHint = badSearchHint(contextText);
                                 if (!hasBadHint || hasMailbox) {
@@ -448,7 +527,7 @@ class MailService:
                                     score += Math.max(0, 320 - contextText.length);
                                     score -= depth * 25;
 
-                                    const target = parent;
+                                    const target = clickableTarget(ancestor);
                                     if (score > bestScore) {
                                         best = {
                                             element: target,
@@ -482,7 +561,11 @@ class MailService:
                 };
             }
             """,
-            {"tokens": _keyword_tokens(keyword), "marker": marker},
+            {
+                "tokens": _keyword_tokens(keyword),
+                "identityTokens": _identity_tokens(keyword),
+                "marker": marker,
+            },
         )
 
         if not result or not result.get("found"):
@@ -500,9 +583,10 @@ class MailService:
 
     def _wait_until_detail_opened(self, keyword: str) -> bool:
         tokens = _keyword_tokens(keyword)
+        identity_tokens = _identity_tokens(keyword)
         detail_selectors = _join_selectors(MAIL_DETAIL_CONTAINER_SELECTORS)
         for context in self._page_and_frames():
-            if self._wait_context_has_mail_detail(context, tokens, detail_selectors):
+            if self._wait_context_has_mail_detail(context, tokens, identity_tokens, detail_selectors):
                 self._detail_context = context
                 url = getattr(context, "url", "")
                 self._log(f"已确认进入邮件详情页: {url}")
@@ -518,48 +602,101 @@ class MailService:
             pass
         return contexts
 
-    def _wait_context_has_mail_detail(self, context: Any, tokens: list[str], detail_selectors: str) -> bool:
+    def _wait_context_has_mail_detail(
+        self,
+        context: Any,
+        tokens: list[str],
+        identity_tokens: list[str],
+        detail_selectors: str,
+    ) -> bool:
         try:
             context.wait_for_function(
                 """
-                ({ tokens, detailSelector }) => {
+                ({ tokens, identityTokens, detailSelector }) => {
                     const bodyText = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
-                    if (!bodyText || !tokens.some((token) => bodyText.includes(token))) {
+                    const matchTokens = identityTokens.length ? identityTokens : tokens;
+                    if (!bodyText || !matchTokens.some((token) => bodyText.includes(token))) {
                         return false;
+                    }
+
+                    function visible(element) {
+                        const rect = element.getBoundingClientRect();
+                        const style = window.getComputedStyle(element);
+                        return rect.width > 20
+                            && rect.height > 20
+                            && style.visibility !== "hidden"
+                            && style.display !== "none";
+                    }
+
+                    function containsIdentity(text) {
+                        const source = (text || "").replace(/\\s+/g, " ");
+                        if (!identityTokens.length) {
+                            return tokens.some((token) => source.includes(token));
+                        }
+                        const matchedCount = identityTokens.filter((token) => source.includes(token)).length;
+                        const requiredCount = identityTokens.length >= 2 ? 2 : 1;
+                        return matchedCount >= requiredCount;
                     }
 
                     const stillSearchResultPage = /已搜索到\\s*\\d+\\s*封/.test(bodyText)
                         || bodyText.includes("继续用AI")
                         || bodyText.includes("批量操作搜索更多邮件");
-                    if (stillSearchResultPage) {
+                    const hasMailHeader = bodyText.includes("发件人")
+                        && (bodyText.includes("收件人") || bodyText.includes("时 间") || bodyText.includes("时间"));
+                    if (stillSearchResultPage && !hasMailHeader) {
                         return false;
                     }
 
-                    if (!detailSelector) {
+                    if (detailSelector) {
+                        const candidates = Array.from(document.querySelectorAll(detailSelector));
+                        if (candidates.some((element) => {
+                            const text = element.innerText || element.textContent || "";
+                            return visible(element) && containsIdentity(text);
+                        })) {
+                            return true;
+                        }
+                    }
+
+                    const strongBodyMatch = containsIdentity(bodyText);
+                    if (strongBodyMatch && (!stillSearchResultPage || hasMailHeader)) {
                         return true;
                     }
 
-                    const candidates = Array.from(document.querySelectorAll(detailSelector));
-                    if (!candidates.length) {
-                        return true;
-                    }
-
-                    return candidates.some((element) => {
-                        const rect = element.getBoundingClientRect();
-                        const style = window.getComputedStyle(element);
-                        const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ");
-                        return rect.width > 20
-                            && rect.height > 20
-                            && style.visibility !== "hidden"
-                            && style.display !== "none"
-                            && tokens.some((token) => text.includes(token));
-                    }) || tokens.some((token) => bodyText.includes(token));
+                    return false;
                 }
                 """,
-                {"tokens": tokens, "detailSelector": detail_selectors},
+                {"tokens": tokens, "identityTokens": identity_tokens, "detailSelector": detail_selectors},
                 timeout=3000,
             )
             return True
+        except Exception:
+            return False
+
+    def _context_looks_like_open_mail_view(self, context: Any, keyword: str) -> bool:
+        try:
+            return bool(
+                context.evaluate(
+                    """
+                    ({ identityTokens }) => {
+                        const text = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
+                        if (!text) {
+                            return false;
+                        }
+
+                        const hasIdentity = !identityTokens.length
+                            || identityTokens.some((token) => text.includes(token));
+                        const hasSearchHints = /已搜索到\\s*\\d+\\s*封/.test(text)
+                            || text.includes("继续用AI")
+                            || text.includes("批量操作搜索更多邮件");
+                        const hasMailHeader = text.includes("发件人")
+                            && (text.includes("收件人") || text.includes("时 间") || text.includes("时间"));
+
+                        return hasIdentity && hasMailHeader && !hasSearchHints;
+                    }
+                    """,
+                    {"identityTokens": _identity_tokens(keyword)},
+                )
+            )
         except Exception:
             return False
 
@@ -570,9 +707,12 @@ class MailService:
                     """
                     () => {
                         const text = (document.body && document.body.innerText || "").replace(/\\s+/g, " ");
-                        return /已搜索到\\s*\\d+\\s*封/.test(text)
+                        const hasSearchHints = /已搜索到\\s*\\d+\\s*封/.test(text)
                             || text.includes("继续用AI")
                             || text.includes("批量操作搜索更多邮件");
+                        const hasMailHeader = text.includes("发件人")
+                            && (text.includes("收件人") || text.includes("时 间") || text.includes("时间"));
+                        return hasSearchHints && !hasMailHeader;
                     }
                     """
                 )
@@ -632,6 +772,30 @@ def _keyword_tokens(keyword: str) -> list[str]:
 
     tokens.sort(key=len, reverse=True)
     return tokens[:8]
+
+
+def _identity_tokens(keyword: str) -> list[str]:
+    """Return fragments that identify one mail better than generic subject words."""
+
+    clean_keyword = keyword.strip()
+    raw_parts = [part.strip() for part in re.split(r"[_\s]+", clean_keyword) if part.strip()]
+
+    tokens: list[str] = []
+    if clean_keyword:
+        tokens.append(clean_keyword)
+
+    for part in raw_parts:
+        upper_part = part.upper()
+        has_digit = any(char.isdigit() for char in part)
+        has_cjk = _has_cjk(part)
+        looks_like_code = bool(re.search(r"[A-Z]{1,}-[A-Z0-9-]{6,}", upper_part))
+
+        if looks_like_code or (has_digit and len(part) >= 8) or (has_cjk and len(part) >= 3 and part != "结题通知"):
+            if part not in tokens:
+                tokens.append(part)
+
+    tokens.sort(key=len, reverse=True)
+    return tokens[:6]
 
 
 def _escape_css_text(text: str) -> str:

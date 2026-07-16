@@ -102,13 +102,19 @@ MAIL_RESULT_CLICKABLE_SELECTORS = (
 MAIL_DETAIL_CONTAINER_SELECTORS = (
     "[class*='mail-content']",
     "[class*='mailContent']",
+    "[class*='mail-body']",
+    "[class*='mailBody']",
     "[class*='readmail']",
     "[class*='readMail']",
     "[class*='mail-detail']",
     "[class*='mailDetail']",
     "[id*='mailContent']",
     "[id*='MailContent']",
+    "[id*='mailBody']",
+    "[id*='MailBody']",
     "[id*='dvMailContent']",
+    "[id*='readmail']",
+    "[id*='readMail']",
     "[class*='letter']",
 )
 
